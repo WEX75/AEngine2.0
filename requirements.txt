@@ -1,0 +1,37 @@
+# ============================================================
+#  APEX ENGINE 2.0 — REQUIREMENTS
+# ============================================================
+
+# ── Core ────────────────────────────────────────────────────
+python-dotenv>=1.0.0
+pyyaml>=6.0.1
+aiohttp>=3.9.5
+asyncio-throttle>=1.0.2
+rich>=13.7.1            # Beautiful terminal output + logging
+
+# ── Testing ─────────────────────────────────────────────────
+pytest==9.1.1            # Runs tests/test_*.py — pinned per CLAUDE.md testing philosophy
+
+# ── Sentinel: Trend Intelligence ────────────────────────────
+praw>=7.7.1             # Reddit API
+pytrends>=4.9.2         # Google Trends (unofficial, no API key needed)
+rapidfuzz>=3.9.3        # Fast fuzzy string matching for dedup
+requests>=2.32.3
+
+# ── Brain: Content Shaping ─────────────────────────────────
+# Ollama runs locally — we talk to it via HTTP (aiohttp above)
+jinja2>=3.1.4           # Prompt templating
+pydantic==2.13.4        # Structured validation for LLM JSON output (ClipScript)
+faster-whisper>=1.0.3   # CPU-only transcription for clip_whisper_bridge.py (Pillar 2, stream-clipping mode)
+
+# ── Factory: Video Rendering (Pillar 3, not yet built in this repo) ─────────
+moviepy>=1.0.3
+Pillow>=10.3.0
+numpy>=1.26.4
+
+# ── Web control panel (webui/backend) — local-only operator UI for
+#   --ingest-vod / --render-manual-window, see webui/backend/main.py ───────
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+python-multipart>=0.0.9   # multipart/form-data parsing for the secondary file-upload endpoint
+httpx>=0.27.0              # TestClient dependency (FastAPI's own test harness)

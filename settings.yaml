@@ -1,0 +1,236 @@
+# ============================================================
+#  APEX ENGINE 2.0 — MASTER CONFIGURATION
+#  Edit this file to tune the system. Secrets go in .env
+# ============================================================
+
+sentinel:
+  scan_interval_hours: 6        # Autonomous scan frequency
+  top_k_trends: 5               # Trends surfaced per cycle
+  viral_score_threshold: 0.25   # Minimum composite score to emit TREND_FOUND
+  dry_run: false                 # true = print results, skip EventBus
+
+  # Reddit scanner — DISABLED (portal API unstable, will re-enable in Phase 2)
+  reddit:
+    enabled: false
+
+  # Google Trends — PRIMARY source (no API key required)
+  google_trends:
+    enabled: true
+    geo: "US"                    # ISO country code
+    categories:                  # Keep ≤ 2 to stay under Google's rate limit
+      - 0                        # All categories  (broadest signal)
+      - 16                       # News            (most viral-friendly)
+    timeframe: "now 1-d"         # pytrends timeframe string
+    weight: 0.70                 # Score contribution (covers 100% while Reddit is off)
+
+  scorer:
+    hook_detection_weight: 0.30  # Remaining score contribution from hook detection
+    min_hook_confidence: 0.10    # Floor — Brain shapes the hook, Sentinel just finds topics
+    dedup_threshold: 0.75        # rapidfuzz token_sort_ratio threshold for dedup
+
+  # Stream moment detection (Pillar 1, stream-clipping mode) — chat/audio/
+  # subtitle fusion. See sentinel/stream_moment_detector.py's module
+  # docstring and CLAUDE.md Pillar 1 for the full scoring model.
+  stream_moment_detection:
+    # Two weighted keyword categories, NOT one flat list — mixing them lets
+    # common hype filler dominate the raw hit count and drown a rare,
+    # meaningful callout. Tune per-game/per-show; these are starting
+    # examples, not tuned against real transcripts yet.
+    semantic_keywords:
+      strong:                     # rare, domain-specific, high-signal terms
+        - headshot
+        - pentakill
+        - clutch
+        - ace
+        - no way
+      generic:                    # common engagement/surprise filler — real
+        - insane                  # signal, but must never outweigh a
+        - literally               # rare/strong term. General-audience
+        - crazy                   # surprise/awe vocabulary ONLY — no
+        - wow                     # personal/relationship-targeting terms.
+        - omg                     # NOTE: "what the" was considered and
+        - unbelievable            # rejected — phrase matching is substring-
+        - incredible              # based and it false-positives on innocuous
+        - unreal                  # speech ("what the next 250 years could
+        - ridiculous              # bring", observed in a real interview
+        - amazing                 # transcript).
+        - awesome
+        - whoa
+        - woah
+        - oh my god
+        - oh my gosh
+        - speechless
+    strong_keyword_weight: 3.0     # per-hit score, strong category
+    generic_keyword_weight: 1.0    # per-hit score, generic category
+
+    # Per-content-type default fusion weights, BEFORE redistribute_weights()
+    # rescales them for whichever signals are actually present on a given
+    # VOD (see sentinel.stream_moment_detector.redistribute_weights and
+    # CLAUDE.md's redistribution-rule note). Each profile's three weights
+    # must sum to 1.0.
+    profiles:
+      gaming:                      # chat-having content (the common case)
+        chat_weight: 0.5
+        audio_weight: 0.3
+        semantic_weight: 0.2
+      interview:                   # chat-less content (podcasts, webinars,
+        chat_weight: 0.0           # interviews) — audio alone was found
+        audio_weight: 0.3          # inadequate (real test: max z=2.03), so
+        semantic_weight: 0.7       # semantic (subtitles) carries most of
+        audio_z_floor: 0.0         # the weight. Subtitles are REQUIRED for
+        composite_threshold: 1.7   # (see the block comment below)
+                                    # this profile — see the CRITICAL
+                                    # PRODUCT DECISION in
+                                    # sentinel/stream_ingest.py: no chat AND
+                                    # no subtitles is rejected at intake,
+                                    # not silently degraded to audio-only.
+                                    #
+                                    # audio_z_floor: 0.0 = RECTIFIED audio —
+                                    # real interview data showed audio_z
+                                    # NEGATIVE at 3 of the 4 strongest
+                                    # semantic moments (calm delivery of
+                                    # striking statements), so for this
+                                    # profile audio may corroborate but
+                                    # never veto. Gaming keeps signed audio
+                                    # (no floor): there, a loudness drop
+                                    # coincident with a chat spike IS
+                                    # legitimate counter-evidence. See
+                                    # stream_moment_detector.py's
+                                    # "Rectified audio" section.
+                                    #
+                                    # composite_threshold: 1.7 — a SEPARATE
+                                    # constant from gaming's 2.5 default,
+                                    # not an inconsistency: interview
+                                    # content has a structurally lower
+                                    # achievable dynamic range (isolated
+                                    # generic-keyword hits cap semantic_z
+                                    # at ~2.0, so composite tops out around
+                                    # ~1.85 even at genuinely clip-worthy
+                                    # audio-corroborated moments).
+                                    # Initial calibration only; validate this
+                                    # threshold against the target content
+                                    # before relying on it in production.
+
+brain:
+  ollama_host: "http://localhost:11434"
+  model: "llama3:8b"             # Confirmed local model
+  temperature: 0.85
+  max_tokens: 500
+  timeout_seconds: 120
+
+cutter:
+  output_dir: "output/clips"     # Rendered stream clips land here
+  encoder: null                  # null = auto-probe h264_vaapi -> h264_amf -> libx264 at startup;
+                                  # set explicitly (e.g. "libx264") to skip probing entirely.
+
+  # DRM render node used by the h264_vaapi encoder probe/render. Only
+  # relevant if h264_vaapi is selected; ignored otherwise. Change this if
+  # your GPU's render node is different.
+  vaapi_device: "/dev/dri/renderD128"
+
+  # Facecam bounding box, per streamer_id — pixel coordinates in the
+  # SOURCE video's own resolution, top-left origin (x, y = top-left
+  # corner; w, h = box size). CLAUDE.md Pillar 3: facecam bbox is
+  # per-streamer, not universal, and is NEVER auto-detected — add an
+  # entry here only for a source actually being clipped.
+  #
+  # A streamer_id with NO entry here falls back to a plain center-crop
+  # of the full frame to 9:16 (no split-screen) — documented fallback,
+  # not an error.
+  facecam_bboxes: {}
+    # example — uncomment and adjust for a real source:
+    # some_streamer_id:
+    #   x: 1500
+    #   y: 100
+    #   w: 400
+    #   h: 400
+
+  # Explicit rendering mode, per streamer_id — "split" | "center_crop" |
+  # "letterbox". PRECEDENCE: an entry here ALWAYS overrides the implicit
+  # facecam_bboxes-presence selection above; a streamer with NO entry
+  # behaves exactly as before this option existed (bbox -> split,
+  # no bbox -> center-crop). Unknown/typo values fail loudly at startup —
+  # never a silent default. "split" additionally requires a facecam_bboxes
+  # entry for the same streamer (also checked at startup).
+  #
+  # "letterbox" preserves the FULL source frame (for campaign briefs with
+  # a mandatory overlay that must never be cropped out): scaled to fit
+  # 1080x1920 at the source's real ffprobe'd aspect ratio, padded with
+  # solid bars — top/bottom bars for wider-than-9:16 sources, left/right
+  # for narrower, none for exact 9:16. Captions render inside the bottom
+  # bar when it's tall enough; otherwise they fall back to the normal
+  # footage safe-zone placement (logged warning). Compositing an external
+  # overlay graphic is a separate future feature, NOT part of this mode.
+  crop_modes: {}
+    # example:
+    # some_streamer_id: letterbox
+
+  # Letterbox bar color — 6-digit hex ("#RRGGBB" or "RRGGBB"), validated
+  # at startup (an invalid value raises, never silently becomes black).
+  letterbox_bar_color: "#000000"
+
+  # Caption style, per streamer_id — "pop" | "static" | "none". Same
+  # precedence/validation pattern as crop_modes: unknown/typo values fail
+  # loudly at startup, never a silent default. No entry -> "pop" (today's
+  # exact behavior, unchanged).
+  #   pop    — word-level animated beats when word data exists, plain
+  #            block captions otherwise (existing behavior).
+  #   static — plain, unanimated block captions ALWAYS, even when word
+  #            data is available.
+  #   none   — no captions burned in at all. Use for source content that
+  #            already has captions baked in. The configured crop_mode
+  #            still applies — only the caption step is skipped.
+  caption_styles: {}
+    # example:
+    # some_streamer_id: static
+
+  # Visual style, per streamer_id — "default" | "vintage_grain". Same
+  # strict validation as crop_modes/caption_styles. No entry -> "default"
+  # (unchanged output). "vintage_grain": subtle film grain + slight
+  # desaturation + a gentle contrast lift, applied BEFORE caption burn-in.
+  # See cutter/clip_renderer.py's named _VINTAGE_* constants — a
+  # first-pass "professional vintage" judgment call, worth a visual
+  # review pass before a real campaign relies on it.
+  visual_styles: {}
+    # example:
+    # some_streamer_id: vintage_grain
+
+  # Slow zoom ("Ken Burns"), per streamer_id — bool, default false when
+  # unset. A gentle continuous zoom-in via ffmpeg's zoompan filter,
+  # applied in the same pre-caption stage as visual_styles (so captions
+  # stay fixed on top of the zoomed footage, not zooming themselves).
+  slow_zoom: {}
+    # example:
+    # some_streamer_id: true
+
+stream_clipping:
+  # true = wire the stream-clipping pipeline (ClipWhisperBridge + ClipRenderer +
+  # orchestrator.clip_orchestrator.ClipOrchestrator) into apex.py's lifecycle,
+  # alongside Sentinel/Brain. Independent of trend-to-script mode, which always
+  # runs regardless of this flag — the two operating modes described at the top
+  # of CLAUDE.md share infrastructure but run/don't-run independently.
+  # Automatically skipped if Brain itself isn't available (e.g. --sentinel-only),
+  # since ClipWhisperBridge hands off to Brain's queue.
+  enabled: false
+
+  # Per-streamer target_duration_range override — [min_sec, max_sec],
+  # validated at startup (min > 0, max > min; malformed entries raise
+  # immediately). No entry -> ClipOrchestrator's constructor default
+  # (12.0, 75.0) applies unchanged. Lives here (not under cutter:) because
+  # orchestrator.clip_orchestrator.ClipOrchestrator is what resolves and
+  # applies it — it's the only place vod_id -> streamer_id is known AND a
+  # target_duration_range is about to be picked (see that module's
+  # docstring, "Per-streamer target_duration_range override"). Reaches
+  # brain.clip_script_generator.ClipScriptGenerator.generate() through the
+  # existing target_duration_range parameter already threaded end to end
+  # (CLAUDE.md "Clip length": never hardcoded, a job parameter).
+  target_duration_ranges: {}
+    # example — a campaign pinned to short, punchy clips:
+    # some_streamer_id: [10.0, 20.0]
+
+logging:
+  level: "INFO"                  # DEBUG / INFO / WARNING / ERROR
+  log_to_file: true
+  log_file: "logs/apex.log"
+  max_bytes: 10485760            # 10 MB per file
+  backup_count: 3

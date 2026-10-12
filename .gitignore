@@ -1,0 +1,21 @@
+.venv/
+venv/
+__pycache__/
+*.pyc
+.env
+logs/
+benchmarks/fixtures/
+output/
+input/vods/
+input/uploads/
+*.mp4
+*.mp3
+*.wav
+models/
+env/
+.pytest_cache/
+
+# webui/ (control panel)
+webui/frontend/node_modules/
+webui/frontend/dist/
+webui/backend/.local_token
